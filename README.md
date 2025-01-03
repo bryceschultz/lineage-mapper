@@ -1,3 +1,3 @@
-# Lineage-Mapper
+# lineage-mapper
 
-Build out field level lineage mappings using javascript
+Build out field level lineage mappings/visualizations using react
