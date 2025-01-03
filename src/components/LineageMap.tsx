@@ -7,6 +7,19 @@ interface LineageMapProps {
     graph: Graph;
 }
 
+interface TableLevel {
+    id: string;
+    level: number;
+    dependencies: string[];
+}
+
+interface InferredEdge {
+    id: string;
+    source: string;
+    target: string;
+    type: string;
+}
+
 const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
     const svgRef = useRef<SVGSVGElement>(null);
     const [expandedTables, setExpandedTables] = useState<string[]>([]);
@@ -22,59 +35,197 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
         }
     }, [expandedTables]);
 
+    // Infer table relationships from field connections
+    const inferTableRelationships = (graph: Graph): InferredEdge[] => {
+        const tableRelations = new Set<string>();
+        const inferredEdges: InferredEdge[] = [];
+
+        graph.edges.forEach(edge => {
+            const sourceField = graph.nodes.find(n => n.id === edge.source);
+            const targetField = graph.nodes.find(n => n.id === edge.target);
+            
+            if (sourceField?.tableId && targetField?.tableId && sourceField.tableId !== targetField.tableId) {
+                const relationKey = `${sourceField.tableId}->${targetField.tableId}`;
+                if (!tableRelations.has(relationKey)) {
+                    tableRelations.add(relationKey);
+                    inferredEdges.push({
+                        id: `table-${relationKey}`,
+                        source: sourceField.tableId,
+                        target: targetField.tableId,
+                        type: 'table-table'
+                    });
+                }
+            }
+        });
+
+        return inferredEdges;
+    };
+
+    const getTableLevels = (graph: Graph): TableLevel[] => {
+        const tableDependencies = new Map<string, Set<string>>();
+        const tableNodes = graph.nodes.filter(node => node.type === 'table');
+        
+        tableNodes.forEach(table => {
+            tableDependencies.set(table.id, new Set());
+        });
+
+        const inferredEdges = inferTableRelationships(graph);
+        inferredEdges.forEach(edge => {
+            const dependencySet = tableDependencies.get(edge.target);
+            if (dependencySet) {
+                dependencySet.add(edge.source);
+            }
+        });
+
+        const levels: TableLevel[] = [];
+        const processed = new Set<string>();
+        let currentLevel = 0;
+
+        while (processed.size < tableNodes.length) {
+            const currentLevelTables = Array.from(tableDependencies.entries())
+                .filter(([tableId, deps]) => !processed.has(tableId) && 
+                    Array.from(deps).every(dep => processed.has(dep)));
+
+            if (currentLevelTables.length === 0 && processed.size < tableNodes.length) {
+                const remainingTables = tableNodes
+                    .filter(table => !processed.has(table.id))
+                    .map(table => table.id);
+                remainingTables.forEach(tableId => {
+                    levels.push({
+                        id: tableId,
+                        level: currentLevel,
+                        dependencies: Array.from(tableDependencies.get(tableId) || [])
+                    });
+                    processed.add(tableId);
+                });
+            } else {
+                currentLevelTables.forEach(([tableId, deps]) => {
+                    levels.push({
+                        id: tableId,
+                        level: currentLevel,
+                        dependencies: Array.from(deps)
+                    });
+                    processed.add(tableId);
+                });
+            }
+            currentLevel++;
+        }
+
+        return levels;
+    };
+
     useEffect(() => {
         if (!svgRef.current) return;
 
         const svg = d3.select(svgRef.current);
-        svg.selectAll('*').remove(); // Clear previous render
+        svg.selectAll('*').remove();
 
         const container = svg.append('g');
 
-        // Calculate node positions
-        const tableNodes = graph.nodes.filter((node) => node.type === 'table');
-        const fieldNodes = graph.nodes.filter((node) => node.type === 'field');
-
+        const tableLevels = getTableLevels(graph);
+        const inferredEdges = inferTableRelationships(graph);
+        
         const tableWidth = 200;
         const tableHeight = 50;
         const fieldHeight = 30;
         const fieldSpacing = 10;
-        const padding = 50;
+        const levelPadding = 100;
+        const verticalPadding = 50;
 
-        const numTables = tableNodes.length;
-        const numCols = Math.ceil(Math.sqrt(numTables));
-        const numRows = Math.ceil(numTables / numCols);
+        const tableNodes = graph.nodes.filter(node => node.type === 'table');
+        const fieldNodes = graph.nodes.filter(node => node.type === 'field');
 
-        const colWidth = tableWidth + padding;
-        const rowHeight = tableHeight + padding * 3;
+        // Calculate table heights including their expanded fields
+        const getTableFullHeight = (tableId: string): number => {
+            if (!expandedTables.includes(tableId)) {
+                return tableHeight;
+            }
+            const fields = fieldNodes.filter(field => field.tableId === tableId);
+            return tableHeight + fieldSpacing + (fields.length * (fieldHeight + fieldSpacing));
+        };
 
-        // Position tables in a grid
-        tableNodes.forEach((node, index) => {
-            const colIndex = index % numCols;
-            const rowIndex = Math.floor(index / numCols);
-            node.x = colIndex * colWidth + padding;
-            node.y = rowIndex * rowHeight + padding;
+        // Group tables by level
+        const tablesByLevel = new Map<number, string[]>();
+        tableLevels.forEach(tableLevel => {
+            if (!tablesByLevel.has(tableLevel.level)) {
+                tablesByLevel.set(tableLevel.level, []);
+            }
+            tablesByLevel.get(tableLevel.level)?.push(tableLevel.id);
         });
 
-        // Position fields relative to their parent tables
-        tableNodes.forEach(table => {
-            const tableFields = fieldNodes.filter(field => field.tableId === table.id);
+        // Calculate maximum number of tables in any level
+        const maxTablesInLevel = Math.max(...Array.from(tablesByLevel.values()).map(tables => tables.length));
+        
+        // Calculate total height needed
+        const totalHeight = (maxTablesInLevel * tableHeight) + ((maxTablesInLevel - 1) * verticalPadding);
+        
+        // Position tables level by level with even vertical distribution
+        tablesByLevel.forEach((tablesInLevel, level) => {
+            const startX = level * (tableWidth + levelPadding * 2);
+            const spacing = totalHeight / (tablesInLevel.length + 1);
             
-            tableFields.forEach((field, fieldIndex) => {
-                if (table.x !== undefined && table.y !== undefined) {
-                    field.x = table.x;
-                    field.y = table.y + tableHeight + fieldSpacing + 
-                             (fieldIndex * (fieldHeight + fieldSpacing));
+            tablesInLevel.forEach((tableId, index) => {
+                const node = tableNodes.find(n => n.id === tableId);
+                if (node) {
+                    node.x = startX;
+                    node.y = spacing * (index + 1) - tableHeight / 2;
+
+                    // Position the table's fields if it's expanded
+                    if (expandedTables.includes(tableId)) {
+                        const tableFields = fieldNodes.filter(field => field.tableId === tableId);
+                        tableFields.forEach((field, fieldIndex) => {
+                            field.x = node.x;
+                            field.y = node.y + tableHeight + fieldSpacing + 
+                                    (fieldIndex * (fieldHeight + fieldSpacing));
+                        });
+                    }
                 }
             });
         });
 
-        // Filter visible nodes
+        let currentY = verticalPadding;
+        tablesByLevel.forEach((tablesInLevel, level) => {
+            let levelHeight = 0;
+            const startX = level * (tableWidth + levelPadding * 2);
+
+            tablesInLevel.forEach((tableId, index) => {
+                const node = tableNodes.find(n => n.id === tableId);
+                if (node) {
+                    node.x = startX;
+                    node.y = currentY;
+
+                    // Update levelHeight if this table is taller
+                    const tableFullHeight = getTableFullHeight(tableId);
+                    levelHeight = Math.max(levelHeight, tableFullHeight);
+
+                    // Position the table's fields if it's expanded
+                    if (expandedTables.includes(tableId)) {
+                        const tableFields = fieldNodes.filter(field => field.tableId === tableId);
+                        tableFields.forEach((field, fieldIndex) => {
+                            field.x = node.x;
+                            field.y = node.y + tableHeight + fieldSpacing + 
+                                    (fieldIndex * (fieldHeight + fieldSpacing));
+                        });
+                    }
+
+                    // Add vertical padding for the next table in this level
+                    if (index < tablesInLevel.length - 1) {
+                        currentY += levelHeight + verticalPadding * 2;
+                        levelHeight = 0;
+                    }
+                }
+            });
+
+            // Move to the next level
+            currentY += levelHeight + verticalPadding * 2;
+        });
+
+        // Rest of the rendering code remains the same...
         const visibleNodes = graph.nodes.filter((node) => {
             if (node.type === 'table') return true;
             return node.type === 'field' && node.tableId && expandedTables.includes(node.tableId);
         });
 
-        // Create node groups
         const nodeGroups = container
             .selectAll('g.node')
             .data(visibleNodes, (d: any) => d.id)
@@ -82,7 +233,6 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
             .attr('class', 'node')
             .attr('transform', (d) => `translate(${d.x},${d.y})`);
 
-        // Add rectangles to nodes
         nodeGroups
             .append('rect')
             .attr('width', (d) => d.type === 'table' ? tableWidth : 150)
@@ -94,7 +244,6 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
             .style('cursor', (d) => d.type === 'table' ? 'pointer' : 'default')
             .on('click', (event, d: Node) => handleTableClick(d));
 
-        // Add text labels to nodes
         nodeGroups
             .append('text')
             .attr('x', 10)
@@ -102,30 +251,34 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
             .text((d) => d.name)
             .style('font-size', '14px');
 
-        // Filter visible edges
-        const visibleEdges = graph.edges.filter(edge => {
-            const sourceNode = graph.nodes.find(n => n.id === edge.source);
-            const targetNode = graph.nodes.find(n => n.id === edge.target);
-            
-            if (!sourceNode || !targetNode) return false;
-            
-            if (sourceNode.type === 'field' && !expandedTables.includes(sourceNode.tableId || '')) return false;
-            if (targetNode.type === 'field' && !expandedTables.includes(targetNode.tableId || '')) return false;
-            
-            return true;
-        });
+        // Draw edges
+        const allEdges = [
+            ...inferredEdges,
+            ...graph.edges.filter(edge => {
+                const sourceNode = graph.nodes.find(n => n.id === edge.source);
+                const targetNode = graph.nodes.find(n => n.id === edge.target);
+                return sourceNode?.type === 'field' && targetNode?.type === 'field' &&
+                       expandedTables.includes(sourceNode.tableId || '') &&
+                       expandedTables.includes(targetNode.tableId || '');
+            })
+        ];
 
         container
             .selectAll('path.edge')
-            .data(visibleEdges, (d: any) => d.id)
+            .data(allEdges, (d: any) => d.id)
             .join('path')
             .attr('class', 'edge')
             .attr('fill', 'none')
-            .attr('stroke', '#dddddd')
-            .attr('stroke-width', 1)
+            .attr('stroke', (d) => d.type === 'table-table' ? '#dddddd' : '#bbbbbb')
+            .attr('stroke-width', (d) => d.type === 'table-table' ? 2 : 1)
+            .attr('stroke-dasharray', (d) => d.type === 'table-table' ? '5,5' : 'none')
             .attr('d', (d) => {
-                const sourceNode = visibleNodes.find(n => n.id === d.source);
-                const targetNode = visibleNodes.find(n => n.id === d.target);
+                const sourceNode = d.type === 'table-table' 
+                    ? tableNodes.find(n => n.id === d.source)
+                    : visibleNodes.find(n => n.id === d.source);
+                const targetNode = d.type === 'table-table'
+                    ? tableNodes.find(n => n.id === d.target)
+                    : visibleNodes.find(n => n.id === d.target);
                 
                 if (!sourceNode || !targetNode) return '';
 
@@ -134,10 +287,8 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
                 const targetX = targetNode.x || 0;
                 const targetY = (targetNode.y || 0) + (targetNode.type === 'table' ? tableHeight/2 : fieldHeight/2);
 
-                // Calculate control points for the S-curve
                 const midX = (sourceX + targetX) / 2;
                 
-                // Create the S-curve path
                 return `M ${sourceX},${sourceY}
                         C ${midX},${sourceY}
                           ${midX},${targetY}
