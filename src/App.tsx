@@ -146,11 +146,13 @@ const App = () => {
       { id: 'fieldF1', type: 'field', name: 'Field F1', tableId: 'tableF' },
     ],
     edges: [
-      { id: 'edge1', source: 'fieldA1', target: 'fieldD1', type: 'field-field' },
-      { id: 'edge2', source: 'fieldB1', target: 'fieldD1', type: 'field-field' },
+      { id: 'edge1', source: 'fieldA1', target: 'fieldD7', type: 'field-field' },
+      { id: 'edge2', source: 'fieldB1', target: 'fieldD8', type: 'field-field' },
       { id: 'edge3', source: 'fieldC1', target: 'fieldD1', type: 'field-field' },
       { id: 'edge4', source: 'fieldD1', target: 'fieldE1', type: 'field-field' },
       { id: 'edge5', source: 'fieldC1', target: 'fieldF1', type: 'field-field' },
+      { id: 'edge6', source: 'fieldA7', target: 'fieldD1', type: 'field-field' },
+      { id: 'edge6', source: 'fieldA8', target: 'fieldD2', type: 'field-field' },
     ]
   };
 

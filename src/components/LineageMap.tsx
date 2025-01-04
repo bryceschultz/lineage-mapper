@@ -23,6 +23,9 @@ interface InferredEdge {
 const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
     const svgRef = useRef<SVGSVGElement>(null);
     const [expandedTables, setExpandedTables] = useState<string[]>([]);
+    const [showTableRelationships, setShowTableRelationships] = useState(false);
+    const [currentTransform, setCurrentTransform] = useState<d3.ZoomTransform | null>(null);
+
 
     const handleTableClick = useCallback((node: Node) => {
         if (node.type === 'table') {
@@ -116,19 +119,34 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
 
     useEffect(() => {
         if (!svgRef.current) return;
-
+    
         const svg = d3.select(svgRef.current);
         svg.selectAll('*').remove();
-
-        const container = svg.append('g');
+    
+        const container = svg.append('g')
+            .attr('class', 'container');
+    
+        const zoom = d3.zoom<SVGSVGElement, unknown>()
+            .scaleExtent([0.1, 22])
+            .on('zoom', (event) => {
+                container.attr('transform', event.transform);
+                setCurrentTransform(event.transform);
+            });
+    
+        svg.call(zoom).on('dblclick.zoom', null); // Disable double-click zoom
+    
+        if (currentTransform) {
+            svg.call(zoom.transform, currentTransform);
+        }
+    
 
         const tableLevels = getTableLevels(graph);
         const inferredEdges = inferTableRelationships(graph);
         
-        const tableWidth = 200;
-        const tableHeight = 50;
-        const fieldHeight = 30;
-        const fieldSpacing = 10;
+        const tableWidth = 100;
+        const tableHeight = 30;
+        const fieldHeight = 20;
+        const fieldSpacing = -4;
         const levelPadding = 100;
         const verticalPadding = 50;
 
@@ -157,7 +175,7 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
         const maxTablesInLevel = Math.max(...Array.from(tablesByLevel.values()).map(tables => tables.length));
         
         // Calculate total height needed
-        const totalHeight = (maxTablesInLevel * tableHeight) + ((maxTablesInLevel - 1) * verticalPadding);
+        const totalHeight = (maxTablesInLevel * tableHeight);
         
         // Position tables level by level with even vertical distribution
         tablesByLevel.forEach((tablesInLevel, level) => {
@@ -168,7 +186,7 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
                 const node = tableNodes.find(n => n.id === tableId);
                 if (node) {
                     node.x = startX;
-                    node.y = spacing * (index + 1) - tableHeight / 2;
+                    node.y = 0;
 
                     // Position the table's fields if it's expanded
                     if (expandedTables.includes(tableId)) {
@@ -183,42 +201,38 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
             });
         });
 
-        let currentY = verticalPadding;
         tablesByLevel.forEach((tablesInLevel, level) => {
-            let levelHeight = 0;
             const startX = level * (tableWidth + levelPadding * 2);
-
+            let levelStartY = verticalPadding; // Start each level at the top independently
+        
             tablesInLevel.forEach((tableId, index) => {
                 const node = tableNodes.find(n => n.id === tableId);
                 if (node) {
                     node.x = startX;
-                    node.y = currentY;
-
-                    // Update levelHeight if this table is taller
+                    node.y = levelStartY;
+        
+                    // Calculate the height of this table
                     const tableFullHeight = getTableFullHeight(tableId);
-                    levelHeight = Math.max(levelHeight, tableFullHeight);
-
+        
                     // Position the table's fields if it's expanded
                     if (expandedTables.includes(tableId)) {
                         const tableFields = fieldNodes.filter(field => field.tableId === tableId);
                         tableFields.forEach((field, fieldIndex) => {
                             field.x = node.x;
-                            field.y = node.y + tableHeight + fieldSpacing + 
-                                    (fieldIndex * (fieldHeight + fieldSpacing));
+                            field.y = node.y + tableHeight + fieldSpacing +
+                                      (fieldIndex * (fieldHeight + fieldSpacing));
                         });
                     }
-
-                    // Add vertical padding for the next table in this level
+        
+                    // Update `levelStartY` for the next table in the same level
                     if (index < tablesInLevel.length - 1) {
-                        currentY += levelHeight + verticalPadding * 2;
-                        levelHeight = 0;
+                        levelStartY += tableFullHeight + verticalPadding * 2;
                     }
                 }
             });
-
-            // Move to the next level
-            currentY += levelHeight + verticalPadding * 2;
         });
+        
+        
 
         // Rest of the rendering code remains the same...
         const visibleNodes = graph.nodes.filter((node) => {
@@ -235,10 +249,10 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
 
         nodeGroups
             .append('rect')
-            .attr('width', (d) => d.type === 'table' ? tableWidth : 150)
-            .attr('height', (d) => d.type === 'table' ? tableHeight : fieldHeight)
+            .attr('width', (d) => d.type === 'table' ? tableWidth : 0)
+            .attr('height', (d) => d.type === 'table' ? 20 : 0)
             .attr('fill', (d) => d.type === 'table' ? '#f0f0f0' : '#ffffff')
-            .attr('rx', 10)
+            .attr('rx', 2)
             .attr('stroke', '#dddddd')
             .attr('stroke-width', 1)
             .style('cursor', (d) => d.type === 'table' ? 'pointer' : 'default')
@@ -249,11 +263,11 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
             .attr('x', 10)
             .attr('y', (d) => d.type === 'table' ? 30 : 20)
             .text((d) => d.name)
-            .style('font-size', '14px');
+            .style('font-size', '7px');
 
         // Draw edges
         const allEdges = [
-            ...inferredEdges,
+            ...(showTableRelationships ? inferredEdges : []), // Include inferredEdges only if showTableRelationships is true
             ...graph.edges.filter(edge => {
                 const sourceNode = graph.nodes.find(n => n.id === edge.source);
                 const targetNode = graph.nodes.find(n => n.id === edge.target);
@@ -262,6 +276,7 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
                        expandedTables.includes(targetNode.tableId || '');
             })
         ];
+        
 
         container
             .selectAll('path.edge')
@@ -282,10 +297,10 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
                 
                 if (!sourceNode || !targetNode) return '';
 
-                const sourceX = (sourceNode.x || 0) + (sourceNode.type === 'table' ? tableWidth : 150);
-                const sourceY = (sourceNode.y || 0) + (sourceNode.type === 'table' ? tableHeight/2 : fieldHeight/2);
+                const sourceX = (sourceNode.x || 0) + tableWidth;
+                const sourceY = (sourceNode.y || 0) + (sourceNode.type === 'table' ? tableHeight/2 : (fieldHeight/2) + 6);
                 const targetX = targetNode.x || 0;
-                const targetY = (targetNode.y || 0) + (targetNode.type === 'table' ? tableHeight/2 : fieldHeight/2);
+                const targetY = (targetNode.y || 0) + (targetNode.type === 'table' ? tableHeight/2 : (fieldHeight/2) + 6);
 
                 const midX = (sourceX + targetX) / 2;
                 
@@ -294,15 +309,22 @@ const LineageMap: React.FC<LineageMapProps> = ({ title, graph }) => {
                           ${midX},${targetY}
                           ${targetX},${targetY}`;
             });
-
-    }, [graph, expandedTables, handleTableClick]);
+    }, [graph, expandedTables, handleTableClick, showTableRelationships]);
 
     return (
         <div id="LineageMap">
             <h3 id="title">{title}</h3>
+            <div style={{position: "absolute", left: "40px"}}>
+                <label className="inline-flex items-center cursor-pointer">
+                <input onChange={(e) => setShowTableRelationships(c => !c)} type="checkbox" value="" className="sr-only peer" />
+                <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 dark:peer-focus:ring-blue-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"></div>
+                <span className="ms-3 text-sm font-medium text-gray-900 dark:text-gray-300">Show Table Level Relationships</span>
+                </label>
+            </div>
+
             <svg ref={svgRef} width="100%" height="100vh" />
         </div>
     );
-}
+};
 
 export default LineageMap;
