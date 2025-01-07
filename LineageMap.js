@@ -206,6 +206,64 @@ class LineageMap {
         }
     }
 
+    wrapText(text, maxWidth, textElement, isErrorText = false) {
+        const words = text.split(/\s+/);
+        let line = [];
+        let lines = [];
+        const startingBullet = text.startsWith('• ') ? '• ' : '';
+        
+        // If there's a bullet point, handle the rest of the text
+        if (startingBullet) {
+            words[0] = words[0].substring(2);
+        }
+        
+        const testText = textElement.append('tspan');
+        
+        words.forEach(word => {
+            line.push(word);
+            const testLine = (line.length === 1 && startingBullet) 
+                ? startingBullet + line.join(' ')
+                : line.join(' ');
+            
+            testText.text(testLine);
+            if (testText.node().getComputedTextLength() > maxWidth) {
+                if (line.length > 1) {
+                    line.pop();
+                    const completedLine = (lines.length === 0 && startingBullet)
+                        ? startingBullet + line.join(' ')
+                        : line.join(' ');
+                    lines.push({
+                        text: completedLine,
+                        isError: isErrorText
+                    });
+                    line = [word];
+                } else {
+                    const completedLine = (lines.length === 0 && startingBullet)
+                        ? startingBullet + word
+                        : word;
+                    lines.push({
+                        text: completedLine,
+                        isError: isErrorText
+                    });
+                    line = [];
+                }
+            }
+        });
+        
+        if (line.length > 0) {
+            const completedLine = (lines.length === 0 && startingBullet)
+                ? startingBullet + line.join(' ')
+                : line.join(' ');
+            lines.push({
+                text: completedLine,
+                isError: isErrorText
+            });
+        }
+        
+        testText.remove();
+        return lines;
+    }
+
     showTransformationPopup(field, graph) {
         this.hideTransformationPopup();
 
@@ -220,33 +278,97 @@ class LineageMap {
 
         const padding = 10;
         const maxWidth = 400;
+        const minWidth = 200;
+        const lineHeight = 20;
+        const textWidth = maxWidth - (padding * 2); // Available width for text
         
-        // Create content including both transformation and validation errors
-        let content = field.transformation;
-        const errors = this.validationErrors.get(field.id);
-        if (errors && errors.length > 0) {
-            content += '\n\nValidation Errors:\n• ' + errors.join('\n• ');
-        }
-
-        // Create temporary text element to measure text width
+        // Replace field IDs with field names in the transformation text
+        let transformationText = field.transformation;
+        const fieldRefRegex = /field[A-Za-z]\d+/g;
+        const fieldRefs = field.transformation.match(fieldRefRegex) || [];
+        
+        fieldRefs.forEach(fieldId => {
+            const referencedField = graph.nodes.find(n => n.id === fieldId);
+            if (referencedField) {
+                transformationText = transformationText.replace(
+                    fieldId, 
+                    referencedField.name
+                );
+            }
+        });
+        
+        // Create temporary text element for measurements
         const tempText = popup.append('text')
             .style('font-family', 'sans-serif')
-            .style('font-size', '12px')
-            .text(content);
-        
-        const textBBox = tempText.node().getBBox();
+            .style('font-size', '12px');
+
+        // Process transformation text
+        const transformationLines = this.wrapText(
+            `Transformation: ${transformationText}`, 
+            textWidth, 
+            tempText,
+            false
+        );
+
+        // Process error messages if they exist
+        let errorLines = [];
+        const errors = this.validationErrors.get(field.id);
+        if (errors && errors.length > 0) {
+            errorLines.push({
+                text: 'Validation Errors:',
+                isError: true
+            });
+            
+            errors.forEach(error => {
+                // Replace field IDs with names in error messages
+                let formattedError = error;
+                fieldRefs.forEach(fieldId => {
+                    const referencedField = graph.nodes.find(n => n.id === fieldId);
+                    if (referencedField) {
+                        formattedError = formattedError.replace(
+                            new RegExp(fieldId, 'g'), 
+                            referencedField.name
+                        );
+                    }
+                });
+                
+                // Wrap each error message and mark all lines as error text
+                const wrappedError = this.wrapText(
+                    `• ${formattedError}`, 
+                    textWidth, 
+                    tempText,
+                    true
+                );
+                errorLines.push(...wrappedError);
+            });
+        }
+
         tempText.remove();
 
-        const boxWidth = Math.min(maxWidth, textBBox.width + padding * 2);
-        const lineHeight = 20;
-        const numLines = content.split('\n').length;
-        const boxHeight = lineHeight * numLines + padding * 2;
+        // Calculate total height needed
+        const totalLines = [
+            ...transformationLines,
+            { text: '', isError: false },
+            ...errorLines
+        ];
+        const boxHeight = (lineHeight * totalLines.length) + padding * 2;
+        const boxWidth = maxWidth;
+
+        // Position popup
+        const popupX = pos.x + this.options.tableWidth + 10;
+        const popupY = Math.max(
+            padding, 
+            Math.min(
+                pos.y - boxHeight/2,
+                this.svg.node().getBoundingClientRect().height - boxHeight - padding
+            )
+        );
 
         // Add semi-transparent overlay
         popup.append('rect')
             .attr('class', 'popup-overlay')
-            .attr('x', pos.x + this.options.tableWidth + 10)
-            .attr('y', pos.y - boxHeight/2)
+            .attr('x', popupX)
+            .attr('y', popupY)
             .attr('width', boxWidth)
             .attr('height', boxHeight)
             .attr('fill', 'rgba(255, 255, 255, 0.95)')
@@ -256,23 +378,27 @@ class LineageMap {
 
         // Add text with line breaks
         const textElement = popup.append('text')
-            .attr('x', pos.x + this.options.tableWidth + 10 + padding)
-            .attr('y', pos.y - boxHeight/2 + padding + 12)
+            .attr('x', popupX + padding)
+            .attr('y', popupY + padding + 12)
             .style('font-family', 'sans-serif')
             .style('font-size', '12px');
 
-        content.split('\n').forEach((line, i) => {
-            textElement.append('tspan')
-                .attr('x', pos.x + this.options.tableWidth + 10 + padding)
+        totalLines.forEach((line, i) => {
+            const tspan = textElement.append('tspan')
+                .attr('x', popupX + padding)
                 .attr('dy', i === 0 ? 0 : lineHeight)
-                .style('fill', line.includes('Validation Errors:') ? '#ff9800' : '#333')
-                .text(line);
+                .text(line.text);
+
+            // Style all error text consistently
+            if (line.isError) {
+                tspan.style('fill', '#ff9800');
+            }
         });
 
         // Add close button
         const closeButton = popup.append('g')
             .attr('class', 'close-button')
-            .attr('transform', `translate(${pos.x + this.options.tableWidth + boxWidth + 5}, ${pos.y - boxHeight/2})`)
+            .attr('transform', `translate(${popupX + boxWidth - 16}, ${popupY + 16})`)
             .style('cursor', 'pointer');
 
         closeButton.append('circle')

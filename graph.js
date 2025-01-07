@@ -70,7 +70,7 @@ const graph = {
     // Table D Fields
     { id: 'fieldD1', type: 'field', name: 'Field D1', tableId: 'tableD', transformation: 'fieldA7 + fieldC1 + fieldB2' }, // This would show an error for fieldB2 if there's no edge from B2
     { id: 'fieldD2', type: 'field', name: 'Field D2', tableId: 'tableD' },
-    { id: 'fieldD3', type: 'field', name: 'Field D3', tableId: 'tableD' },
+    { id: 'fieldD3', type: 'field', name: 'Field D3', tableId: 'tableD', transformation: 'fieldA7 + fieldA9' }, // this transformation would not show an error
     { id: 'fieldD4', type: 'field', name: 'Field D4', tableId: 'tableD' },
     { id: 'fieldD5', type: 'field', name: 'Field D5', tableId: 'tableD' },
     { id: 'fieldD6', type: 'field', name: 'Field D6', tableId: 'tableD' },
@@ -147,7 +147,9 @@ const graph = {
     { id: 'edge4', source: 'fieldD1', target: 'fieldE1', type: 'field-field' },
     { id: 'edge5', source: 'fieldC1', target: 'fieldF1', type: 'field-field' },
     { id: 'edge6', source: 'fieldA7', target: 'fieldD1', type: 'field-field' },
-    { id: 'edge6', source: 'fieldA8', target: 'fieldD2', type: 'field-field' },
+    { id: 'edge7', source: 'fieldA8', target: 'fieldD2', type: 'field-field' },
+    { id: 'edge8', source: 'fieldA7', target: 'fieldD3', type: 'field-field' },
+    { id: 'edge9', source: 'fieldA9', target: 'fieldD3', type: 'field-field' },
   ]
 };
 
