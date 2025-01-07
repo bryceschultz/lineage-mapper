@@ -1,14 +1,54 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <link href="https://cdn.jsdelivr.net/npm/flowbite@2.5.2/dist/flowbite.min.css" rel="stylesheet" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + React + TS</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <title>Data Transformation for Process XYZ</title>
+    <style>
+      #lineage-map-container {
+        width: 100%;
+        height: 800px;
+        border: 1px solid #ccc;
+      }
+      
+      .table-header {
+        cursor: pointer;
+        fill: #f0f0f0;
+        stroke: #ccc;
+      }
+      
+      .field-row {
+        cursor: pointer;
+      }
+      
+      .field-row:hover {
+        fill: #e0e0e0;
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
+    <main>
+      <h1>Data Transformation for Process XYZ</h1>
+      <div id="lineage-map-container"></div>
+    </main>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script type="module">
+      import { graph } from "./graph.js";
+      import { LineageMap } from "./LineageMap.js";
+  
+      // Create the lineage map
+      const container = document.getElementById('lineage-map-container');
+      const lineageMap = new LineageMap(container, {
+          width: '100%',
+          height: '800px'
+      });
+  
+      // Make lineageMap accessible for edge highlighting
+      window.lineageMap = lineageMap;
+  
+      // Render your graph data
+      lineageMap.render(graph);
+  </script>
   </body>
 </html>
