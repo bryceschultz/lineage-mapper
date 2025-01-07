@@ -15,6 +15,8 @@ class LineageMap {
         this.expandedTables = new Set();
         this.highlightedFields = new Set();
         this.showTableRelationships = false;
+        this.selectedField = null;
+        this.positions = new Map();
 
         this.init();
     }
@@ -84,23 +86,150 @@ class LineageMap {
     renderField(node, data) {
         const { tableWidth, fieldHeight } = this.options;
 
-        // Add field background
-        node.append('rect')
+        // Create a group for the field
+        const fieldGroup = node.append('g')
+            .attr('class', 'field-group');
+
+        // Add field background that covers the entire width
+        fieldGroup.append('rect')
             .attr('class', 'field-row')
             .attr('width', tableWidth)
             .attr('height', fieldHeight)
             .attr('fill', this.highlightedFields.has(data.id) ? '#e3f2fd' : '#ffffff')
-            .attr('stroke', '#eeeeee');
+            .attr('stroke', '#eeeeee')
+            .style('cursor', 'pointer');
 
         // Add field name
-        node.append('text')
+        fieldGroup.append('text')
+            .attr('class', 'field-text')
             .attr('x', 10)
             .attr('y', fieldHeight / 2)
             .attr('dy', '0.35em')
             .attr('fill', '#666666')
             .style('font-family', 'sans-serif')
             .style('font-size', '11px')
+            .style('pointer-events', 'none')
             .text(data.name);
+
+        // If there's a transformation, add an indicator
+        if (data.transformation) {
+            fieldGroup.append('text')
+                .attr('class', 'transform-indicator')
+                .attr('x', tableWidth - 20)
+                .attr('y', fieldHeight / 2)
+                .attr('dy', '0.35em')
+                .attr('fill', '#666666')
+                .style('font-family', 'sans-serif')
+                .style('font-size', '11px')
+                .style('pointer-events', 'none')
+                .text('ƒ');
+        }
+    }
+
+    handleFieldClick(graph, fieldId) {
+        const field = graph.nodes.find(n => n.id === fieldId);
+        if (!field) return;
+
+        if (this.selectedField === fieldId) {
+            // Deselect if clicking the same field
+            this.selectedField = null;
+            this.hideTransformationPopup();
+        } else {
+            this.selectedField = fieldId;
+            this.showTransformationPopup(field, graph);
+        }
+    }
+
+    showTransformationPopup(field, graph) {
+        // Remove any existing popup
+        this.hideTransformationPopup();
+
+        if (!field.transformation) return;
+
+        const pos = this.getFieldPosition(field.id);
+        if (!pos) return;
+
+        // Create popup container
+        const popup = this.mainGroup.append('g')
+            .attr('class', 'transformation-popup');
+
+        // Background
+        const padding = 10;
+        const maxWidth = 300;
+        
+        // Create temporary text element to measure text width
+        const tempText = popup.append('text')
+            .style('font-family', 'sans-serif')
+            .style('font-size', '12px')
+            .text(field.transformation);
+        
+        const textBBox = tempText.node().getBBox();
+        tempText.remove();
+
+        const boxWidth = Math.min(maxWidth, textBBox.width + padding * 2);
+        const boxHeight = 30;
+
+        // Add semi-transparent overlay behind popup
+        popup.append('rect')
+            .attr('class', 'popup-overlay')
+            .attr('x', pos.x + this.options.tableWidth + 10)
+            .attr('y', pos.y - boxHeight/2)
+            .attr('width', boxWidth)
+            .attr('height', boxHeight)
+            .attr('fill', 'rgba(255, 255, 255, 0.95)')
+            .attr('stroke', '#dee2e6')
+            .attr('rx', 4)
+            .attr('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))');
+
+        // Text
+        popup.append('text')
+            .attr('x', pos.x + this.options.tableWidth + 10 + padding)
+            .attr('y', pos.y)
+            .attr('dy', '0.35em')
+            .style('font-family', 'sans-serif')
+            .style('font-size', '12px')
+            .style('fill', '#333')
+            .text(field.transformation);
+
+        // Add a close button
+        const closeButton = popup.append('g')
+            .attr('class', 'close-button')
+            .attr('transform', `translate(${pos.x + this.options.tableWidth + boxWidth + 5}, ${pos.y - boxHeight/2})`)
+            .style('cursor', 'pointer');
+
+        closeButton.append('circle')
+            .attr('r', 8)
+            .attr('fill', '#f8f9fa')
+            .attr('stroke', '#dee2e6');
+
+        closeButton.append('text')
+            .attr('x', 0)
+            .attr('y', 0)
+            .attr('dy', '0.35em')
+            .attr('text-anchor', 'middle')
+            .style('font-family', 'sans-serif')
+            .style('font-size', '12px')
+            .style('fill', '#666')
+            .text('×');
+
+        closeButton.on('click', () => {
+            this.selectedField = null;
+            this.hideTransformationPopup();
+        });
+    }
+
+    hideTransformationPopup() {
+        this.mainGroup.selectAll('.transformation-popup').remove();
+    }
+
+    getFieldPosition(fieldId) {
+        const pos = this.positions.get(fieldId);
+        if (!pos) return null;
+        
+        return {
+            x: pos.x,
+            y: pos.y + (this.options.fieldHeight / 2) // Center vertically in field
+        };
     }
 
     inferTableRelationships(graph) {
@@ -370,7 +499,7 @@ class LineageMap {
             }
         });
 
-        console.log(positions)
+        this.positions = positions;
         return positions;
     }
 
@@ -473,9 +602,18 @@ class LineageMap {
         this.mainGroup.selectAll('.table-header')
             .on('click', (event, d) => this.toggleTableExpansion(d.id));
 
-        this.mainGroup.selectAll('.field-row')
+        this.mainGroup.selectAll('.field-group')
+            .attr('data-field-id', d => d.id)
             .on('mouseenter', (event, d) => this.handleFieldHover(this.currentGraph, d.id))
-            .on('mouseleave', () => this.handleFieldHover(this.currentGraph, null));
+            .on('mouseleave', () => this.handleFieldHover(this.currentGraph, null))
+            .on('click', (event, d) => this.handleFieldClick(this.currentGraph, d.id));
+
+        // Close transformation popup when clicking outside
+        this.svg.on('click', (event) => {
+            if (event.target.closest('.field-group')) return;
+            this.selectedField = null;
+            this.hideTransformationPopup();
+        });
     }
 }
 

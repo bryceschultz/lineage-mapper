@@ -68,7 +68,7 @@ const graph = {
     // Table D
     { id: 'tableD', type: 'table', name: 'Table D' },
     // Table D Fields
-    { id: 'fieldD1', type: 'field', name: 'Field D1', tableId: 'tableD' },
+    { id: 'fieldD1', type: 'field', name: 'Field D1', tableId: 'tableD', transformation: 'fieldA7 + fieldC1' },
     { id: 'fieldD2', type: 'field', name: 'Field D2', tableId: 'tableD' },
     { id: 'fieldD3', type: 'field', name: 'Field D3', tableId: 'tableD' },
     { id: 'fieldD4', type: 'field', name: 'Field D4', tableId: 'tableD' },
