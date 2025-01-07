@@ -516,25 +516,21 @@ class LineageMap {
     }
 
     getRelatedFields(graph, fieldId) {
-        const related = new Set([fieldId]);
+        const related = new Set([fieldId]); // Only store fields that feed into the current field
         const visited = new Set();
-
+    
         const traverse = (id) => {
             if (visited.has(id)) return;
             visited.add(id);
-
+    
             graph.edges.forEach(edge => {
-                if (edge.source === id) {
-                    related.add(edge.target);
-                    traverse(edge.target);
-                }
-                if (edge.target === id) {
+                if (edge.target === id) { // Only follow edges feeding into the current field
                     related.add(edge.source);
                     traverse(edge.source);
                 }
             });
         };
-
+    
         traverse(fieldId);
         return related;
     }
