@@ -17,6 +17,7 @@ class LineageMap {
         this.showTableRelationships = false;
         this.selectedField = null;
         this.positions = new Map();
+        this.validationErrors = new Map();
 
         this.init();
     }
@@ -40,6 +41,54 @@ class LineageMap {
         this.svg.call(this.zoom)
             .on('dblclick.zoom', null);
     }
+
+    validateTransformations(graph) {
+        this.validationErrors.clear();
+        
+        // Build an index of incoming edges for each field
+        const incomingEdges = new Map();
+        graph.edges.forEach(edge => {
+            if (!incomingEdges.has(edge.target)) {
+                incomingEdges.set(edge.target, new Set());
+            }
+            incomingEdges.get(edge.target).add(edge.source);
+        });
+
+        // Regular expression to find field references (fieldX1, fieldY2, etc.)
+        const fieldRefRegex = /field[A-Za-z]\d+/g;
+
+        // Validate each node's transformation
+        graph.nodes.forEach(node => {
+            if (node.type === 'field' && node.transformation) {
+                const errors = [];
+                const referencedFields = node.transformation.match(fieldRefRegex) || [];
+                
+                // Check each referenced field
+                referencedFields.forEach(fieldRef => {
+                    const incomingFields = incomingEdges.get(node.id) || new Set();
+                    
+                    if (!incomingFields.has(fieldRef)) {
+                        errors.push(`Field "${fieldRef}" is used in transformation but has no edge connecting to "${node.id}"`);
+                    }
+                });
+
+                // Check if there are edges that aren't used in the transformation
+                const incomingFields = incomingEdges.get(node.id) || new Set();
+                incomingFields.forEach(sourceField => {
+                    if (!referencedFields.includes(sourceField)) {
+                        errors.push(`Field "${sourceField}" has an edge but isn't used in the transformation`);
+                    }
+                });
+
+                if (errors.length > 0) {
+                    this.validationErrors.set(node.id, errors);
+                }
+            }
+        });
+
+        return this.validationErrors;
+    }
+
 
     renderTable(node, data) {
         const { tableWidth, tableHeight } = this.options;
@@ -90,14 +139,31 @@ class LineageMap {
         const fieldGroup = node.append('g')
             .attr('class', 'field-group');
 
-        // Add field background that covers the entire width
-        fieldGroup.append('rect')
+        // Add field background
+        const background = fieldGroup.append('rect')
             .attr('class', 'field-row')
             .attr('width', tableWidth)
             .attr('height', fieldHeight)
             .attr('fill', this.highlightedFields.has(data.id) ? '#e3f2fd' : '#ffffff')
             .attr('stroke', '#eeeeee')
             .style('cursor', 'pointer');
+
+        // If there are validation errors, add a warning indicator
+        if (this.validationErrors.has(data.id)) {
+            background.attr('stroke', '#ff9800')
+                .attr('stroke-width', '2');
+
+            fieldGroup.append('text')
+                .attr('class', 'warning-indicator')
+                .attr('x', tableWidth - 40)
+                .attr('y', fieldHeight / 2)
+                .attr('dy', '0.35em')
+                .attr('fill', '#ff9800')
+                .style('font-family', 'sans-serif')
+                .style('font-size', '11px')
+                .style('pointer-events', 'none')
+                .text('⚠');
+        }
 
         // Add field name
         fieldGroup.append('text')
@@ -118,7 +184,7 @@ class LineageMap {
                 .attr('x', tableWidth - 20)
                 .attr('y', fieldHeight / 2)
                 .attr('dy', '0.35em')
-                .attr('fill', '#666666')
+                .attr('fill', this.validationErrors.has(data.id) ? '#ff9800' : '#666666')
                 .style('font-family', 'sans-serif')
                 .style('font-size', '11px')
                 .style('pointer-events', 'none')
@@ -141,7 +207,6 @@ class LineageMap {
     }
 
     showTransformationPopup(field, graph) {
-        // Remove any existing popup
         this.hideTransformationPopup();
 
         if (!field.transformation) return;
@@ -153,23 +218,31 @@ class LineageMap {
         const popup = this.mainGroup.append('g')
             .attr('class', 'transformation-popup');
 
-        // Background
         const padding = 10;
-        const maxWidth = 300;
+        const maxWidth = 400;
         
+        // Create content including both transformation and validation errors
+        let content = field.transformation;
+        const errors = this.validationErrors.get(field.id);
+        if (errors && errors.length > 0) {
+            content += '\n\nValidation Errors:\n• ' + errors.join('\n• ');
+        }
+
         // Create temporary text element to measure text width
         const tempText = popup.append('text')
             .style('font-family', 'sans-serif')
             .style('font-size', '12px')
-            .text(field.transformation);
+            .text(content);
         
         const textBBox = tempText.node().getBBox();
         tempText.remove();
 
         const boxWidth = Math.min(maxWidth, textBBox.width + padding * 2);
-        const boxHeight = 30;
+        const lineHeight = 20;
+        const numLines = content.split('\n').length;
+        const boxHeight = lineHeight * numLines + padding * 2;
 
-        // Add semi-transparent overlay behind popup
+        // Add semi-transparent overlay
         popup.append('rect')
             .attr('class', 'popup-overlay')
             .attr('x', pos.x + this.options.tableWidth + 10)
@@ -177,21 +250,26 @@ class LineageMap {
             .attr('width', boxWidth)
             .attr('height', boxHeight)
             .attr('fill', 'rgba(255, 255, 255, 0.95)')
-            .attr('stroke', '#dee2e6')
+            .attr('stroke', errors ? '#ff9800' : '#dee2e6')
             .attr('rx', 4)
             .attr('filter', 'drop-shadow(0 2px 4px rgba(0,0,0,0.1))');
 
-        // Text
-        popup.append('text')
+        // Add text with line breaks
+        const textElement = popup.append('text')
             .attr('x', pos.x + this.options.tableWidth + 10 + padding)
-            .attr('y', pos.y)
-            .attr('dy', '0.35em')
+            .attr('y', pos.y - boxHeight/2 + padding + 12)
             .style('font-family', 'sans-serif')
-            .style('font-size', '12px')
-            .style('fill', '#333')
-            .text(field.transformation);
+            .style('font-size', '12px');
 
-        // Add a close button
+        content.split('\n').forEach((line, i) => {
+            textElement.append('tspan')
+                .attr('x', pos.x + this.options.tableWidth + 10 + padding)
+                .attr('dy', i === 0 ? 0 : lineHeight)
+                .style('fill', line.includes('Validation Errors:') ? '#ff9800' : '#333')
+                .text(line);
+        });
+
+        // Add close button
         const closeButton = popup.append('g')
             .attr('class', 'close-button')
             .attr('transform', `translate(${pos.x + this.options.tableWidth + boxWidth + 5}, ${pos.y - boxHeight/2})`)
@@ -409,6 +487,10 @@ class LineageMap {
     }
     
     render(graph) {
+        // Validate transformations before rendering
+        this.validateTransformations(graph);
+        
+        // Continue with normal render
         this.currentGraph = graph;
         const tableLevels = this.getTableLevels(graph);
         const positions = this.calculatePositions(graph, tableLevels);
